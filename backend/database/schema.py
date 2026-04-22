@@ -16,6 +16,27 @@ import aiosqlite
 async def init_schema(db: aiosqlite.Connection) -> None:
     """모든 테이블과 인덱스를 CREATE IF NOT EXISTS로 초기화한다."""
 
+    # ── Tier 2: 장기 사용자 사실 ─────────────────────────────────────────
+    # 세션을 넘어 영구 보존되는 사용자 관련 사실.
+    # 배치 작업(Phase 4)에서 LLM이 대화를 분석해 추출·저장한다.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS facts (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            category       TEXT    NOT NULL
+                               CHECK(category IN ('preference','personal','event','relation')),
+            content        TEXT    NOT NULL,
+            importance     INTEGER NOT NULL CHECK(importance BETWEEN 1 AND 3),
+            created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_accessed  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            source_session TEXT
+        )
+    """)
+    # importance 높고 최근 접근한 fact 우선 조회용
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_facts_rank
+        ON facts(importance DESC, last_accessed DESC)
+    """)
+
     # ── Tier 1: 대화 턴 원본 ─────────────────────────────────────────────
     # 현재 세션의 날것 대화 기록. 프롬프트 조립 시 가장 최근 N턴을 읽는다.
     await db.execute("""
