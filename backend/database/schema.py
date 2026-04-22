@@ -16,6 +16,24 @@ import aiosqlite
 async def init_schema(db: aiosqlite.Connection) -> None:
     """모든 테이블과 인덱스를 CREATE IF NOT EXISTS로 초기화한다."""
 
+    # ── Tier 3: 세션 요약 ────────────────────────────────────────────────
+    # 과거 세션을 LLM이 압축한 에피소드 기억.
+    # 배치 작업(Phase 4)에서 세션 종료 또는 1시간 idle 시 생성된다.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS session_summaries (
+            session_id  TEXT    PRIMARY KEY,
+            summary     TEXT    NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            started_at  DATETIME NOT NULL,
+            ended_at    DATETIME
+        )
+    """)
+    # 최신 세션 요약부터 역순 조회용 (Tier 3 조립 시 최근 N개 선택)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_summaries_started
+        ON session_summaries(started_at DESC)
+    """)
+
     # ── Tier 2: 장기 사용자 사실 ─────────────────────────────────────────
     # 세션을 넘어 영구 보존되는 사용자 관련 사실.
     # 배치 작업(Phase 4)에서 LLM이 대화를 분석해 추출·저장한다.
