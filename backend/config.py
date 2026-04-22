@@ -57,4 +57,11 @@ class Config:
     API_RELOAD = os.getenv("API_RELOAD", "false").lower() == "true"
     CONVERSATION_MAX_HISTORY = int(os.getenv("CONVERSATION_MAX_HISTORY", "10"))
 
+    # DATABASE
+    # 기본값: backend/ 디렉토리 안의 airi.db
+    DB_PATH = os.getenv(
+        "DB_PATH",
+        str(os.path.join(os.path.dirname(__file__), "airi.db"))
+    )
+
 config = Config()
