@@ -6,7 +6,6 @@ from fastapi import FastAPI
 from domains.stt.whisper_engine import WhisperEngine
 from domains.llm.llama_engine import LlamaEngine
 from domains.tts.piper_engine import PiperEngine
-from domains.conversation.manager import ConversationManager
 from core.pipeline import VoicePipeline
 from core.event_bus import EventBus
 from database.connection import connect, disconnect
@@ -94,12 +93,11 @@ async def run_once(audio_path: str):
     await connect()
     pipeline = None
     try:
-        stt          = WhisperEngine()
-        llm          = LlamaEngine()
-        tts          = PiperEngine()
-        conversation = ConversationManager()
-        event_bus    = EventBus()
-        pipeline     = VoicePipeline(stt, llm, tts, conversation, event_bus)
+        stt       = WhisperEngine()
+        llm       = LlamaEngine()
+        tts       = PiperEngine()
+        event_bus = EventBus()
+        pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
         result = await pipeline.run(audio_path)
         print(f"\n사용자: {result['user_text']}")
         print(f"AI    : {result['ai_text']}")
@@ -115,14 +113,13 @@ async def run_loop():
     pipeline = None
     watchdog = None
     try:
-        stt          = WhisperEngine()
-        llm          = LlamaEngine()
-        tts          = PiperEngine()
-        conversation = ConversationManager()
-        event_bus    = EventBus()
-        pipeline     = VoicePipeline(stt, llm, tts, conversation, event_bus)
-        recorder     = AudioRecorder()
-        watchdog     = IdleWatchdog(pipeline)
+        stt       = WhisperEngine()
+        llm       = LlamaEngine()
+        tts       = PiperEngine()
+        event_bus = EventBus()
+        pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
+        recorder  = AudioRecorder()
+        watchdog  = IdleWatchdog(pipeline)
         print("=" * 50)
         print("  오프라인 음성 어시스턴트 시작")
         print("  종료: Ctrl+C")
@@ -150,12 +147,11 @@ async def run_loop():
 
 async def run_server(host: str, port: int):
     """마이크 루프 + FastAPI 서버 동시 실행."""
-    stt          = WhisperEngine()
-    llm          = LlamaEngine()
-    tts          = PiperEngine()
-    conversation = ConversationManager()
-    event_bus    = EventBus()
-    pipeline     = VoicePipeline(stt, llm, tts, conversation, event_bus)
+    stt       = WhisperEngine()
+    llm       = LlamaEngine()
+    tts       = PiperEngine()
+    event_bus = EventBus()
+    pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
 
     app = create_app(pipeline)
 

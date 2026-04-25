@@ -7,6 +7,7 @@ from core.event_bus import EventBus
 from domains.soul.soul_container import SoulContainer, SoulConfig
 from domains.soul.memory import MemoryManager
 from core.context_builder import build_messages
+from core.tokenizer import count_tokens
 from domains.soul.avatar_bridge import AvatarBridge
 
 
@@ -15,16 +16,15 @@ MIN_SENTENCE_LEN = 10
 
 class VoicePipeline:
 
-    def __init__(self, stt, llm, tts, conversation,
+    def __init__(self, stt, llm, tts,
                  event_bus=None, soul=None, memory=None, avatar_bridge=None):
-        self.stt          = stt
-        self.llm          = llm
-        self.tts          = tts
-        self.conversation = conversation
-        self.event_bus    = event_bus or EventBus()
-        self.soul         = soul   or SoulContainer(SoulConfig.from_preset("airi"))
-        self.memory       = memory or MemoryManager()
-        self.avatar       = avatar_bridge
+        self.stt       = stt
+        self.llm       = llm
+        self.tts       = tts
+        self.event_bus = event_bus or EventBus()
+        self.soul      = soul   or SoulContainer(SoulConfig.from_preset("airi"))
+        self.memory    = memory or MemoryManager()
+        self.avatar    = avatar_bridge
 
     async def run(self, audio_path: str) -> dict:
 
@@ -111,25 +111,18 @@ class VoicePipeline:
         if emotion is None:
             emotion = last_emotion or Emotion.NEUTRAL
 
-        await self.memory.add_turn("user", user_text)
-        await self.memory.add_turn("assistant", ai_text)
-        self.conversation.add_user(user_text)
-        self.conversation.add_ai(ai_text)
+        user_tok, ai_tok = await asyncio.gather(
+            count_tokens(user_text),
+            count_tokens(ai_text),
+        )
+        await self.memory.add_turn("user",      user_text, token_count=user_tok)
+        await self.memory.add_turn("assistant", ai_text,   token_count=ai_tok)
 
         result = {
             "user_text": user_text,
             "ai_text":   ai_text,
             "emotion":   emotion.value,
-            "turn":      self.conversation.turn_count(),
+            "turn":      self.memory.turn_count,
         }
         await self.event_bus.publish("turn_complete", result)
         return result
-
-    @staticmethod
-    def _build_prompt(system_prompt: str, history: list[dict]) -> str:
-        lines = [f"<|system|>\n{system_prompt}</s>"]
-        for msg in history:
-            tag = "user" if msg["role"] == "user" else "assistant"
-            lines.append(f"<|{tag}|>\n{msg['content']}</s>")
-        lines.append("<|assistant|>")
-        return "\n".join(lines)
