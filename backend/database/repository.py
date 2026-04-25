@@ -91,6 +91,13 @@ async def touch_facts(db: aiosqlite.Connection, ids: list[int]) -> None:
     )
 
 
+async def get_fact_contents(db: aiosqlite.Connection) -> list[dict]:
+    """전체 facts의 category + content 반환 — 중복 검사용."""
+    async with db.execute("SELECT category, content FROM facts") as cursor:
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
 # Tier 3: session_summaries
 
 async def insert_summary(

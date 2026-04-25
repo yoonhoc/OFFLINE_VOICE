@@ -1,17 +1,26 @@
-"""세션 종료 배치 — 대화에서 장기 기억 facts 추출 후 DB 저장."""
+"""세션 종료 배치 — facts 추출 + 세션 요약 생성."""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
+from datetime import datetime, timezone
 
+from core.tokenizer import count_tokens
 from database.connection import get_db
 import database.repository as repo
 from domains.llm.llama_engine import LlamaEngine
 from domains.soul.memory import MemoryManager
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ── Facts 추출 ───────────────────────────────────────────────────────────
 
 _EXTRACTION_PROMPT = """\
 아래는 사용자와 AI(아이리)의 대화 기록입니다.
@@ -51,6 +60,22 @@ importance 기준:
 {conversation}"""
 
 
+_SUMMARY_PROMPT = """\
+아래는 사용자와 AI(아이리)의 대화 기록입니다.
+이 대화를 1~2문장으로 짧게 요약해주세요.
+
+요약 기준:
+- 대화의 핵심 화제와 분위기를 압축
+- 새로 알게 된 사용자 정보나 의미 있는 사건 위주로 서술
+- 추측·확장·감상 없이 실제 대화 내용만 정리
+- "사용자가 ~했다" 형식으로 객관적으로 작성
+
+응답은 요약 문장만 출력하세요. 설명·따옴표·번호·머리글 없이.
+
+대화 기록:
+{conversation}"""
+
+
 def _format_turns(turns: list[dict]) -> str:
     lines = []
     for t in turns:
@@ -78,17 +103,27 @@ def _parse_facts(response: str) -> list[dict]:
         return []
 
 
-async def run_session_batch(llm: LlamaEngine, memory: MemoryManager) -> None:
-    """disconnect() 호출 전 실행. 대화 → facts 추출 → DB 저장."""
-    turns = await memory.get_recent_turns(n=200)
-    if not turns:
-        return
+def _normalize(s: str) -> str:
+    return s.strip().lower().replace(" ", "")
 
+
+def _is_duplicate(content: str, existing: list[str]) -> bool:
+    """정규화 후 exact 일치 또는 새 content가 기존의 substring이면 중복."""
+    n = _normalize(content)
+    if not n:
+        return True
+    for ex in existing:
+        e = _normalize(ex)
+        if n == e or n in e:
+            return True
+    return False
+
+
+async def _extract_facts(llm: LlamaEngine, memory: MemoryManager, turns: list[dict]) -> None:
+    """대화 → LLM → JSON facts 파싱 → 중복 필터 → DB 저장."""
     conversation = _format_turns(turns)
-    prompt = _EXTRACTION_PROMPT.format(conversation=conversation)
-    messages = [{"role": "user", "content": prompt}]
+    messages = [{"role": "user", "content": _EXTRACTION_PROMPT.format(conversation=conversation)}]
 
-    logger.info("세션 종료 배치 시작")
     try:
         response = await llm.generate(messages)
     except Exception as e:
@@ -101,19 +136,89 @@ async def run_session_batch(llm: LlamaEngine, memory: MemoryManager) -> None:
         return
 
     db = await get_db()
+
+    # 카테고리별 기존 contents 캐시 (중복 검사용)
+    by_cat: dict[str, list[str]] = {}
+    for row in await repo.get_fact_contents(db):
+        by_cat.setdefault(row["category"], []).append(row["content"])
+
+    inserted = 0
+    skipped  = 0
     try:
         for fact in facts:
+            cat = fact["category"]
+            if _is_duplicate(fact["content"], by_cat.get(cat, [])):
+                skipped += 1
+                continue
             await repo.insert_fact(
                 db,
-                category=fact["category"],
+                category=cat,
                 content=fact["content"],
                 importance=fact["importance"],
                 source_session=memory.session_id,
             )
+            by_cat.setdefault(cat, []).append(fact["content"])
+            inserted += 1
         await db.commit()
     except Exception as e:
         await db.rollback()
         logger.warning(f"facts 저장 실패, 롤백: {e}")
         return
 
-    logger.info(f"facts {len(facts)}개 저장 (세션 {memory.session_id[:8]})")
+    if skipped:
+        logger.info(f"facts {inserted}개 저장, {skipped}개 중복 스킵")
+    else:
+        logger.info(f"facts {inserted}개 저장")
+
+
+# ── 세션 요약 ────────────────────────────────────────────────────────────
+
+async def _generate_summary(llm: LlamaEngine, memory: MemoryManager, turns: list[dict]) -> None:
+    """대화 → 1~2문장 요약 → 토큰 수 계산 → DB 저장."""
+    conversation = _format_turns(turns)
+    messages = [{"role": "user", "content": _SUMMARY_PROMPT.format(conversation=conversation)}]
+
+    try:
+        response = await llm.generate(messages)
+    except Exception as e:
+        logger.warning(f"세션 요약 실패: {e}")
+        return
+
+    summary = response.strip()
+    if len(summary) < 5:
+        logger.info("세션 요약 내용 없음")
+        return
+
+    token_count = await count_tokens(summary)
+    started_at  = turns[0].get("created_at") or _now()
+
+    db = await get_db()
+    try:
+        await repo.insert_summary(
+            db,
+            session_id=memory.session_id,
+            summary=summary,
+            token_count=token_count,
+            started_at=started_at,
+            ended_at=_now(),
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.warning(f"세션 요약 저장 실패: {e}")
+        return
+
+    logger.info(f"세션 요약 저장 ({len(summary)}자, {token_count}토큰)")
+
+
+# ── 진입점 ───────────────────────────────────────────────────────────────
+
+async def run_session_batch(llm: LlamaEngine, memory: MemoryManager) -> None:
+    """disconnect() 호출 전 실행. facts 추출 + 세션 요약을 순차 처리."""
+    turns = await memory.get_recent_turns(n=200)
+    if not turns:
+        return
+
+    logger.info(f"세션 종료 배치 시작 (세션 {memory.session_id[:8]}, {len(turns)}턴)")
+    await _extract_facts(llm, memory, turns)
+    await _generate_summary(llm, memory, turns)
