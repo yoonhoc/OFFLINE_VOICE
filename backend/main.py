@@ -10,15 +10,8 @@ from domains.conversation.manager import ConversationManager
 from core.pipeline import VoicePipeline
 from core.event_bus import EventBus
 from database.connection import connect, disconnect
+from core.session_batch import run_session_batch
 from config import config
-
-
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    """FastAPI 앱 생명주기: 시작 시 DB 연결, 종료 시 DB 해제."""
-    await connect()
-    yield
-    await disconnect()
 
 
 def create_app(pipeline: VoicePipeline) -> FastAPI:
@@ -27,10 +20,20 @@ def create_app(pipeline: VoicePipeline) -> FastAPI:
     from api.avatar_ws import avatar_websocket_endpoint
     from fastapi.staticfiles import StaticFiles
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 서버 시작 전 db 세팅
+        await connect()
+        # 서버 유지
+        yield
+        # 서버 닫히기 전 훅 
+        await run_session_batch(pipeline.llm, pipeline.memory)
+        await disconnect()
+
     app = FastAPI(
         title="Offline Voice Assistant",
         version="1.0.0",
-        lifespan=_lifespan,
+        lifespan=lifespan,
     )
 
     app.include_router(router, prefix="/api/v1")
@@ -83,6 +86,7 @@ async def mic_loop(pipeline: VoicePipeline):
 
 async def run_once(audio_path: str):
     await connect()
+    pipeline = None
     try:
         stt          = WhisperEngine()
         llm          = LlamaEngine()
@@ -94,12 +98,15 @@ async def run_once(audio_path: str):
         print(f"\n사용자: {result['user_text']}")
         print(f"AI    : {result['ai_text']}")
     finally:
+        if pipeline:
+            await run_session_batch(pipeline.llm, pipeline.memory)
         await disconnect()
 
 
 async def run_loop():
     from domains.audio_input.recorder import AudioRecorder
     await connect()
+    pipeline = None
     try:
         stt          = WhisperEngine()
         llm          = LlamaEngine()
@@ -125,6 +132,8 @@ async def run_loop():
             except Exception as e:
                 print(f"[오류] {e}")
     finally:
+        if pipeline:
+            await run_session_batch(pipeline.llm, pipeline.memory)
         await disconnect()
 
 
