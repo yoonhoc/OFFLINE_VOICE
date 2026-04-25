@@ -19,8 +19,8 @@ class MemoryManager:
     async def add_turn(self, role: str, content: str, token_count: int = 0) -> None:
         self._turn_num += 1
         db = await get_db()
-        async with db:
-            await repo.insert_turn(db, self._session_id, self._turn_num, role, content, token_count)
+        await repo.insert_turn(db, self._session_id, self._turn_num, role, content, token_count)
+        await db.commit()
 
     async def get_recent_turns(self, n: int) -> list[dict]:
         db = await get_db()
@@ -32,6 +32,6 @@ class MemoryManager:
         facts = await repo.get_facts(db, min_importance, limit)
         if facts:
             ids = [f["id"] for f in facts]
-            async with db:
-                await repo.touch_facts(db, ids)
+            await repo.touch_facts(db, ids)
+            await db.commit()
         return facts

@@ -101,7 +101,7 @@ async def run_session_batch(llm: LlamaEngine, memory: MemoryManager) -> None:
         return
 
     db = await get_db()
-    async with db:
+    try:
         for fact in facts:
             await repo.insert_fact(
                 db,
@@ -110,5 +110,10 @@ async def run_session_batch(llm: LlamaEngine, memory: MemoryManager) -> None:
                 importance=fact["importance"],
                 source_session=memory.session_id,
             )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.warning(f"facts 저장 실패, 롤백: {e}")
+        return
 
     logger.info(f"facts {len(facts)}개 저장 (세션 {memory.session_id[:8]})")
