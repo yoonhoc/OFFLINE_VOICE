@@ -1,16 +1,15 @@
 import asyncio
 import requests
 from config import config
-from domains.llm.models import LLMRequest, LLMResponse
+from domains.llm.models import LLMResponse
 
 
 class LlamaEngine:
 
     def __init__(self):
-        self.server_url    = config.LLM_SERVER_URL
-        self.max_tokens    = config.LLM_MAX_TOKENS
-        self.temperature   = config.LLM_TEMPERATURE
-        self.system_prompt = config.LLM_SYSTEM_PROMPT
+        self.server_url  = config.LLM_SERVER_URL
+        self.max_tokens  = config.LLM_MAX_TOKENS
+        self.temperature = config.LLM_TEMPERATURE
 
     def _check_server(self) -> None:
         try:
