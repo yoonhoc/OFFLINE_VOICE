@@ -5,7 +5,8 @@ import re
 from config import config
 from core.event_bus import EventBus
 from domains.soul.soul_container import SoulContainer, SoulConfig
-from domains.soul.memory import MemorySystem
+from domains.soul.memory import MemoryManager
+from core.context_builder import build_messages
 from domains.soul.avatar_bridge import AvatarBridge
 
 
@@ -22,7 +23,7 @@ class VoicePipeline:
         self.conversation = conversation
         self.event_bus    = event_bus or EventBus()
         self.soul         = soul   or SoulContainer(SoulConfig.from_preset("airi"))
-        self.memory       = memory or MemorySystem()
+        self.memory       = memory or MemoryManager()
         self.avatar       = avatar_bridge
 
     async def run(self, audio_path: str) -> dict:
@@ -40,10 +41,16 @@ class VoicePipeline:
             return {"user_text": "", "ai_text": "", "emotion": "neutral"}
 
         await self.event_bus.publish("stt_complete", {"text": user_text})
-        self.memory.add_turn("user", user_text)
 
         # ── 2+3. LLM 스트리밍 + TTS 오버랩 ──────────────────
         print("[Pipeline] ▶ 2+3/3 LLM 스트리밍 + TTS 오버랩 재생")
+
+        messages = await build_messages(
+            system_prompt=self.soul.build_system_prompt(),
+            memory=self.memory,
+            user_text=user_text,
+            token_budget=config.LLM_CONTEXT_SIZE - config.LLM_MAX_TOKENS,
+        )
 
         full_response = []
         pending = ""
@@ -82,7 +89,7 @@ class VoicePipeline:
         await broadcast({"type": "speaking", "speaking": True})
 
         await loop.run_in_executor(
-            None, self.llm.stream_sync, user_text, on_sentence
+            None, self.llm.stream_sync, messages, on_sentence
         )
 
         # 남은 pending 처리
@@ -104,7 +111,8 @@ class VoicePipeline:
         if emotion is None:
             emotion = last_emotion or Emotion.NEUTRAL
 
-        self.memory.add_turn("assistant", ai_text)
+        await self.memory.add_turn("user", user_text)
+        await self.memory.add_turn("assistant", ai_text)
         self.conversation.add_user(user_text)
         self.conversation.add_ai(ai_text)
 

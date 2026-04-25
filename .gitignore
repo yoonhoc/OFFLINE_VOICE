@@ -26,3 +26,4 @@ __pycache__/
 # 기타
 .DS_Store
 *.log
+*.db

@@ -25,13 +25,10 @@ class LlamaEngine:
                 f"-c {config.LLM_CONTEXT_SIZE} -t {config.LLM_THREADS} --port {config.LLM_SERVER_URL.split(':')[-1]}"
             )
 
-    def generate_sync(self, request: LLMRequest) -> LLMResponse:
+    def generate_sync(self, messages: list[dict]) -> LLMResponse:
         self._check_server()
         payload = {
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user",   "content": request.prompt},
-            ],
+            "messages":    messages,
             "max_tokens":  self.max_tokens,
             "temperature": self.temperature,
             "stream":      False,
@@ -49,17 +46,11 @@ class LlamaEngine:
         print(f"[LLM] 응답: {text[:80]}{'...' if len(text) > 80 else ''}")
         return LLMResponse(text=text)
 
-    def stream_sync(self, prompt: str, callback):
-        """
-        스트리밍으로 토큰을 받아 문장 단위로 callback 호출.
-        callback(sentence: str) 형태로 호출됩니다.
-        """
+    def stream_sync(self, messages: list[dict], callback):
+        """스트리밍으로 토큰을 받아 문장 단위로 callback 호출."""
         self._check_server()
         payload = {
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user",   "content": prompt},
-            ],
+            "messages":    messages,
             "max_tokens":  self.max_tokens,
             "temperature": self.temperature,
             "stream":      True,
@@ -108,13 +99,12 @@ class LlamaEngine:
             callback(buffer.strip())
         print()
 
-    async def generate(self, prompt: str) -> str:
-        loop    = asyncio.get_event_loop()
-        request = LLMRequest(prompt=prompt)
-        result  = await loop.run_in_executor(None, self.generate_sync, request)
+    async def generate(self, messages: list[dict]) -> str:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self.generate_sync, messages)
         return result.text
 
-    async def stream(self, prompt: str, callback):
+    async def stream(self, messages: list[dict], callback):
         """비동기 스트리밍."""
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self.stream_sync, prompt, callback)
+        await loop.run_in_executor(None, self.stream_sync, messages, callback)
