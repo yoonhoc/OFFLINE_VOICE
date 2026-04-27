@@ -64,7 +64,4 @@ class Config:
         str(os.path.join(os.path.dirname(__file__), "airi.db"))
     )
 
-    # 발화 없이 IDLE_TIMEOUT_SEC 경과 시 세션 배치 자동 트리거 (기본 1시간)
-    IDLE_TIMEOUT_SEC = int(os.getenv("IDLE_TIMEOUT_SEC", "3600"))
-
 config = Config()
