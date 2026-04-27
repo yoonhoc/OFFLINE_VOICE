@@ -84,23 +84,57 @@ def _format_turns(turns: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_IMPORTANCE_KO = {
+    "낮음": 1, "보통": 2, "중간": 2, "높음": 3, "매우 높음": 3, "매우높음": 3,
+}
+
+
+def _coerce_importance(v) -> int | None:
+    """LLM이 정수 대신 문자열·실수·한국어 단어로 줘도 1~3으로 흡수."""
+    if isinstance(v, bool):
+        return None  # bool은 int 서브클래스라 명시 차단
+    if isinstance(v, int) and 1 <= v <= 3:
+        return v
+    if isinstance(v, float) and v == int(v):
+        n = int(v)
+        return n if 1 <= n <= 3 else None
+    if isinstance(v, str):
+        s = v.strip()
+        if s.isdigit():
+            n = int(s)
+            return n if 1 <= n <= 3 else None
+        return _IMPORTANCE_KO.get(s)
+    return None
+
+
 def _parse_facts(response: str) -> list[dict]:
     match = re.search(r"\[.*\]", response, re.DOTALL)
     if not match:
         return []
     try:
-        facts = json.loads(match.group())
-        return [
-            f for f in facts
-            if isinstance(f, dict)
-            and f.get("category") in ("preference", "personal", "event", "relation")
-            and isinstance(f.get("content"), str)
-            and f.get("content").strip()
-            and isinstance(f.get("importance"), int)
-            and 1 <= f["importance"] <= 3
-        ]
+        raw_facts = json.loads(match.group())
     except json.JSONDecodeError:
         return []
+
+    valid: list[dict] = []
+    for f in raw_facts:
+        if not isinstance(f, dict):
+            continue
+        cat = f.get("category")
+        if cat not in ("preference", "personal", "event", "relation"):
+            continue
+        content = f.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        importance = _coerce_importance(f.get("importance"))
+        if importance is None:
+            continue
+        valid.append({
+            "category":   cat,
+            "content":    content.strip(),
+            "importance": importance,
+        })
+    return valid
 
 
 def _normalize(s: str) -> str:
@@ -108,15 +142,11 @@ def _normalize(s: str) -> str:
 
 
 def _is_duplicate(content: str, existing: list[str]) -> bool:
-    """정규화 후 exact 일치 또는 새 content가 기존의 substring이면 중복."""
+    """정규화 후 exact 일치만 중복으로 처리. substring 매칭은 false positive 위험."""
     n = _normalize(content)
     if not n:
         return True
-    for ex in existing:
-        e = _normalize(ex)
-        if n == e or n in e:
-            return True
-    return False
+    return any(n == _normalize(ex) for ex in existing)
 
 
 async def _extract_facts(llm: LlamaEngine, memory: MemoryManager, turns: list[dict]) -> None:
