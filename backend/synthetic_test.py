@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from config import config
 from core.context_builder import build_messages
 from core.session_batch import _is_duplicate
-from core.tokenizer import _approx_tokens
+from core.tokenizer import count_tokens
 from database.connection import connect, disconnect, get_db, get_session_id
 import database.repository as repo
 from domains.soul.memory import MemoryManager
@@ -157,7 +157,7 @@ async def scenario_3_budget_compliance() -> None:
             user_text="오늘 점심 뭐 먹었어?",
             token_budget=budget,
         )
-        total = sum(_approx_tokens(m["content"]) for m in msgs)
+        total = sum(count_tokens(m["content"]) for m in msgs)
         ok = "✓ pass" if total <= budget else "✗ FAIL"
         print(f"  {budget:>8} | {len(msgs):>8} | {total:>10} | {ok}")
 
@@ -223,9 +223,9 @@ async def scenario_5_tier_distribution() -> None:
     hist_msgs  = msgs[len(sys_msgs):-1]   # system 이후, 마지막 user 직전
     current    = msgs[-1]
 
-    sys_tok  = sum(_approx_tokens(m["content"]) for m in sys_msgs)
-    hist_tok = sum(_approx_tokens(m["content"]) for m in hist_msgs)
-    cur_tok  = _approx_tokens(current["content"])
+    sys_tok  = sum(count_tokens(m["content"]) for m in sys_msgs)
+    hist_tok = sum(count_tokens(m["content"]) for m in hist_msgs)
+    cur_tok  = count_tokens(current["content"])
     total    = sys_tok + hist_tok + cur_tok
 
     print(f"  Tier 2/3 주입 system 블록  : {len(sys_msgs):2d}개 — {sys_tok:4d}토큰 ({sys_tok/total*100:.1f}%)")

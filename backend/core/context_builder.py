@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from core.tokenizer import count_tokens
 from database.connection import get_db
 import database.repository as repo
@@ -48,7 +46,7 @@ async def build_messages(
     facts     = await memory.get_facts(min_importance=1, limit=20)
     turns     = await memory.get_recent_turns(n=20)
 
-    # 토큰 수 일괄 병렬 계산 (HTTP 왕복 1라운드)
+    # 토큰 수 일괄 계산 — len 기반 in-memory 근사라 비용 무시 가능
     # 시스템 프롬프트에 들어가는 블록 prefix(헤더, bullet)도 함께 측정
     texts = (
         [system_prompt, user_text, _SUMMARY_HEADER, _FACT_HEADER, _BULLET]
@@ -56,7 +54,7 @@ async def build_messages(
         + [f["content"]  for f in facts]
         + [t["content"]  for t in turns]
     )
-    counts = await asyncio.gather(*(count_tokens(t) for t in texts))
+    counts = [count_tokens(t) for t in texts]
 
     sys_tok, user_tok                                 = counts[0], counts[1]
     summary_header_tok, fact_header_tok, bullet_tok   = counts[2], counts[3], counts[4]
@@ -95,7 +93,7 @@ async def build_messages(
     if fb:
         full_system += f"\n\n{fb}"
 
-    actual_sys_tok = await count_tokens(full_system)
+    actual_sys_tok = count_tokens(full_system)
     used = actual_sys_tok + user_tok
 
     # Tier 1: 보정된 예산 안에서 오래된 턴부터 제거

@@ -219,7 +219,7 @@ async def _generate_summary(llm: LlamaEngine, memory: MemoryManager, turns: list
         logger.info("세션 요약 내용 없음")
         return
 
-    token_count = await count_tokens(summary)
+    token_count = count_tokens(summary)
     started_at  = turns[0].get("created_at") or _now()
 
     db = await get_db()
