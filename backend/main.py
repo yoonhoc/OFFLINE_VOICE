@@ -10,7 +10,6 @@ from core.pipeline import VoicePipeline
 from core.event_bus import EventBus
 from database.connection import connect, disconnect
 from core.session_batch import run_session_batch
-from core.idle_watchdog import IdleWatchdog
 from config import config
 
 
@@ -66,27 +65,22 @@ def create_app(pipeline: VoicePipeline) -> FastAPI:
 async def mic_loop(pipeline: VoicePipeline):
     from domains.audio_input.recorder import AudioRecorder
     recorder = AudioRecorder()
-    watchdog = IdleWatchdog(pipeline)
     print("=" * 50)
     print("  마이크 루프 시작 (백그라운드)")
     print("=" * 50)
-    try:
-        while True:
-            try:
-                audio_path = await recorder.record_async()
-                result     = await pipeline.run(audio_path)
-                if result["user_text"]:
-                    watchdog.reset()
-                    print(f"\n사용자: {result['user_text']}")
-                    print(f"AI    : {result['ai_text']}\n")
-            except KeyboardInterrupt:
-                print("\n[마이크 루프] 종료")
-                break
-            except Exception as e:
-                print(f"[마이크 루프 오류] {e}")
-                await asyncio.sleep(1)  # 오류 시 1초 대기 후 재시도
-    finally:
-        watchdog.stop()
+    while True:
+        try:
+            audio_path = await recorder.record_async()
+            result     = await pipeline.run(audio_path)
+            if result["user_text"]:
+                print(f"\n사용자: {result['user_text']}")
+                print(f"AI    : {result['ai_text']}\n")
+        except KeyboardInterrupt:
+            print("\n[마이크 루프] 종료")
+            break
+        except Exception as e:
+            print(f"[마이크 루프 오류] {e}")
+            await asyncio.sleep(1)  # 오류 시 1초 대기 후 재시도
 
 
 async def run_once(audio_path: str):
@@ -111,7 +105,6 @@ async def run_loop():
     from domains.audio_input.recorder import AudioRecorder
     await connect()
     pipeline = None
-    watchdog = None
     try:
         stt       = WhisperEngine()
         llm       = LlamaEngine()
@@ -119,7 +112,6 @@ async def run_loop():
         event_bus = EventBus()
         pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
         recorder  = AudioRecorder()
-        watchdog  = IdleWatchdog(pipeline)
         print("=" * 50)
         print("  오프라인 음성 어시스턴트 시작")
         print("  종료: Ctrl+C")
@@ -129,7 +121,6 @@ async def run_loop():
                 audio_path = await recorder.record_async()
                 result     = await pipeline.run(audio_path)
                 if result["user_text"]:
-                    watchdog.reset()
                     print(f"\n사용자: {result['user_text']}")
                     print(f"AI    : {result['ai_text']}\n")
             except KeyboardInterrupt:
@@ -138,8 +129,6 @@ async def run_loop():
             except Exception as e:
                 print(f"[오류] {e}")
     finally:
-        if watchdog:
-            watchdog.stop()
         if pipeline:
             await run_session_batch(pipeline.llm, pipeline.memory)
         await disconnect()

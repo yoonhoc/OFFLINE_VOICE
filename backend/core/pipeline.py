@@ -111,12 +111,8 @@ class VoicePipeline:
         if emotion is None:
             emotion = last_emotion or Emotion.NEUTRAL
 
-        user_tok, ai_tok = await asyncio.gather(
-            count_tokens(user_text),
-            count_tokens(ai_text),
-        )
-        await self.memory.add_turn("user",      user_text, token_count=user_tok)
-        await self.memory.add_turn("assistant", ai_text,   token_count=ai_tok)
+        await self.memory.add_turn("user",      user_text, token_count=count_tokens(user_text))
+        await self.memory.add_turn("assistant", ai_text,   token_count=count_tokens(ai_text))
 
         result = {
             "user_text": user_text,
