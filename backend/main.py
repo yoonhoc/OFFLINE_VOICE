@@ -1,13 +1,15 @@
 import asyncio
 import argparse
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from domains.stt.whisper_engine import WhisperEngine
 from domains.llm.llama_engine import LlamaEngine
 from domains.tts.piper_engine import PiperEngine
-from domains.conversation.manager import ConversationManager
 from core.pipeline import VoicePipeline
 from core.event_bus import EventBus
+from database.connection import connect, disconnect
+from core.session_batch import run_session_batch
 from config import config
 
 
@@ -17,9 +19,20 @@ def create_app(pipeline: VoicePipeline) -> FastAPI:
     from api.avatar_ws import avatar_websocket_endpoint
     from fastapi.staticfiles import StaticFiles
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 서버 시작 전 db 세팅
+        await connect()
+        # 서버 유지
+        yield
+        # 서버 닫히기 전 훅 
+        await run_session_batch(pipeline.llm, pipeline.memory)
+        await disconnect()
+
     app = FastAPI(
         title="Offline Voice Assistant",
         version="1.0.0",
+        lifespan=lifespan,
     )
 
     app.include_router(router, prefix="/api/v1")
@@ -71,52 +84,63 @@ async def mic_loop(pipeline: VoicePipeline):
 
 
 async def run_once(audio_path: str):
-    stt          = WhisperEngine()
-    llm          = LlamaEngine()
-    tts          = PiperEngine()
-    conversation = ConversationManager()
-    event_bus    = EventBus()
-    pipeline     = VoicePipeline(stt, llm, tts, conversation, event_bus)
-    result = await pipeline.run(audio_path)
-    print(f"\n사용자: {result['user_text']}")
-    print(f"AI    : {result['ai_text']}")
+    await connect()
+    pipeline = None
+    try:
+        stt       = WhisperEngine()
+        llm       = LlamaEngine()
+        tts       = PiperEngine()
+        event_bus = EventBus()
+        pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
+        result = await pipeline.run(audio_path)
+        print(f"\n사용자: {result['user_text']}")
+        print(f"AI    : {result['ai_text']}")
+    finally:
+        if pipeline:
+            await run_session_batch(pipeline.llm, pipeline.memory)
+        await disconnect()
 
 
 async def run_loop():
     from domains.audio_input.recorder import AudioRecorder
-    stt          = WhisperEngine()
-    llm          = LlamaEngine()
-    tts          = PiperEngine()
-    conversation = ConversationManager()
-    event_bus    = EventBus()
-    pipeline     = VoicePipeline(stt, llm, tts, conversation, event_bus)
-    recorder     = AudioRecorder()
-    print("=" * 50)
-    print("  오프라인 음성 어시스턴트 시작")
-    print("  종료: Ctrl+C")
-    print("=" * 50)
-    while True:
-        try:
-            audio_path = await recorder.record_async()
-            result     = await pipeline.run(audio_path)
-            if result["user_text"]:
-                print(f"\n사용자: {result['user_text']}")
-                print(f"AI    : {result['ai_text']}\n")
-        except KeyboardInterrupt:
-            print("\n종료합니다.")
-            break
-        except Exception as e:
-            print(f"[오류] {e}")
+    await connect()
+    pipeline = None
+    try:
+        stt       = WhisperEngine()
+        llm       = LlamaEngine()
+        tts       = PiperEngine()
+        event_bus = EventBus()
+        pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
+        recorder  = AudioRecorder()
+        print("=" * 50)
+        print("  오프라인 음성 어시스턴트 시작")
+        print("  종료: Ctrl+C")
+        print("=" * 50)
+        while True:
+            try:
+                audio_path = await recorder.record_async()
+                result     = await pipeline.run(audio_path)
+                if result["user_text"]:
+                    print(f"\n사용자: {result['user_text']}")
+                    print(f"AI    : {result['ai_text']}\n")
+            except KeyboardInterrupt:
+                print("\n종료합니다.")
+                break
+            except Exception as e:
+                print(f"[오류] {e}")
+    finally:
+        if pipeline:
+            await run_session_batch(pipeline.llm, pipeline.memory)
+        await disconnect()
 
 
 async def run_server(host: str, port: int):
     """마이크 루프 + FastAPI 서버 동시 실행."""
-    stt          = WhisperEngine()
-    llm          = LlamaEngine()
-    tts          = PiperEngine()
-    conversation = ConversationManager()
-    event_bus    = EventBus()
-    pipeline     = VoicePipeline(stt, llm, tts, conversation, event_bus)
+    stt       = WhisperEngine()
+    llm       = LlamaEngine()
+    tts       = PiperEngine()
+    event_bus = EventBus()
+    pipeline  = VoicePipeline(stt, llm, tts, event_bus=event_bus)
 
     app = create_app(pipeline)
 
