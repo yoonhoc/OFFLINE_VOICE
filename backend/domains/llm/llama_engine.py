@@ -1,11 +1,10 @@
 import asyncio
 import requests
+import json
 from config import config
 from domains.llm.models import LLMResponse
 
-
 class LlamaEngine:
-
     def __init__(self):
         self.server_url  = config.LLM_SERVER_URL
         self.max_tokens  = config.LLM_MAX_TOKENS
@@ -17,49 +16,75 @@ class LlamaEngine:
             if r.status_code != 200:
                 raise RuntimeError()
         except Exception:
-            raise RuntimeError(
-                "llama-server가 실행되지 않았습니다!\n"
-                f"{config.LLAMA_BIN} "
-                f"-m {config.LLAMA_MODEL} "
-                f"-c {config.LLM_CONTEXT_SIZE} -t {config.LLM_THREADS} --port {config.LLM_SERVER_URL.split(':')[-1]}"
-            )
+            raise RuntimeError("llama-server가 실행되지 않았습니다!")
+
+    def _format_prompt(self, messages: list[dict]) -> str:
+        """EXAONE 3.5 공식 템플릿 형식으로 프롬프트를 강제 조립"""
+        prompt = ""
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                prompt += f"[|system|]\n{content}\n"
+            elif role == "user":
+                prompt += f"[|user|]\n{content}\n"
+            elif role == "assistant":
+                prompt += f"[|assistant|]\n{content}\n"
+        
+        # 마지막에 AI가 대답할 차례임을 알리는 태그 추가
+        prompt += "[|assistant|]\n"
+        return prompt
 
     def generate_sync(self, messages: list[dict]) -> LLMResponse:
         self._check_server()
+        
+        # 1. messages 배열 대신 문자열 프롬프트 직접 조립
+        raw_prompt = self._format_prompt(messages)
+        
         payload = {
-            "messages":    messages,
+            "prompt":      raw_prompt,  # messages -> prompt로 변경
             "max_tokens":  self.max_tokens,
             "temperature": self.temperature,
             "stream":      False,
+            # 모델이 혼자 질문하고 대답하는 환각(Hallucination) 방지용 제동 장치
+            "stop":        ["[|user|]", "[|system|]"] 
         }
+        
         print("[LLM] 응답 생성 중...")
         response = requests.post(
-            f"{self.server_url}/v1/chat/completions",
+            f"{self.server_url}/v1/completions", # /chat/completions -> /completions 로 변경
             json=payload,
             timeout=120,
         )
         if response.status_code != 200:
             raise RuntimeError(f"llama-server 오류: {response.text}")
         data = response.json()
-        text = data["choices"][0]["message"]["content"].strip()
+        text = data["choices"][0]["text"].strip() # "message"]["content"] -> "text" 로 변경
         print(f"[LLM] 응답: {text[:80]}{'...' if len(text) > 80 else ''}")
         return LLMResponse(text=text)
 
     def stream_sync(self, messages: list[dict], callback):
-        """스트리밍으로 토큰을 받아 문장 단위로 callback 호출."""
         self._check_server()
+        
+        # 1. messages 배열 대신 문자열 프롬프트 직접 조립
+        raw_prompt = self._format_prompt(messages)
+        
+        # === 디버깅용: 터미널에서 프롬프트가 정상적으로 만들어졌는지 확인 ===
+        print("\n[LLM 전송 프롬프트 확인]\n", raw_prompt, "\n======================")
+        
         payload = {
-            "messages":    messages,
+            "prompt":      raw_prompt,
             "max_tokens":  self.max_tokens,
             "temperature": self.temperature,
             "stream":      True,
+            "stop":        ["[|user|]", "[|system|]"] 
         }
 
         buffer = ""
         sentence_endings = (".", "!", "?", "~", "。", "！", "？", "\n")
 
         with requests.post(
-            f"{self.server_url}/v1/chat/completions",
+            f"{self.server_url}/v1/completions", # 엔드포인트 변경
             json=payload,
             stream=True,
             timeout=120,
@@ -73,15 +98,14 @@ class LlamaEngine:
                 if line == "[DONE]":
                     break
                 try:
-                    import json
                     data  = json.loads(line)
-                    delta = data["choices"][0]["delta"].get("content", "")
+                    # "choices"][0]["delta"]["content"] -> "choices"][0]["text"] 로 구조 변경
+                    delta = data["choices"][0].get("text", "") 
                     if not delta:
                         continue
                     buffer += delta
                     print(delta, end="", flush=True)
 
-                    # 문장 끝나면 바로 TTS 콜백
                     for ending in sentence_endings:
                         if ending in buffer:
                             parts = buffer.split(ending)
@@ -93,7 +117,6 @@ class LlamaEngine:
                 except Exception:
                     continue
 
-        # 남은 버퍼 처리
         if buffer.strip():
             callback(buffer.strip())
         print()
@@ -104,6 +127,5 @@ class LlamaEngine:
         return result.text
 
     async def stream(self, messages: list[dict], callback):
-        """비동기 스트리밍."""
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.stream_sync, messages, callback)

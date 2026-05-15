@@ -29,7 +29,7 @@ class Config:
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     LLM_THREADS = int(os.getenv("LLM_THREADS", "4"))
     LLM_CONTEXT_SIZE = int(os.getenv("LLM_CONTEXT_SIZE", "512"))
-    LLM_SYSTEM_PROMPT = "너는 아이리야. 17세, 밝고 친근해. 한국어로 짧게 답해."
+    LLM_SYSTEM_PROMPT = "너는 5살 아이들의 다정한 친구, 귀여운 곰돌이 인형 '포비'야. 항상 친절하고 따뜻하게 아이들의 눈높이에 맞춰 반말로 대답해야 해."
     LLM_SERVER_URL = os.getenv("LLM_SERVER_URL", "http://127.0.0.1:8080")
 
     #TTS 

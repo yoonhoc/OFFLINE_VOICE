@@ -147,7 +147,7 @@ npm run build
 **터미널 1 - whisper-server:**
 ```powershell
 C:\dev\whisper.cpp\build\bin\Release\whisper-server.exe `
-  -m C:\dev\whisper.cpp\models\ggml-tiny.bin `
+  -m E:\dev\whisper.cpp\models\ggml-tiny.bin `
   -l ko --port 8081
 ```
 
